@@ -79,15 +79,23 @@ public class FridaCopyPlugin implements JadxPlugin {
     }
 
     private boolean isMethod(ICodeNodeRef ref, JadxDecompiler decompiler) {
-        if (ref.getAnnType() != ICodeAnnotation.AnnType.METHOD) return false;
-        JavaNode node = decompiler.getJavaNodeByRef(ref);
-        return node instanceof JavaMethod;
+        if (ref == null) return false;
+        try {
+            JavaNode node = decompiler.getJavaNodeByRef(ref);
+            return node instanceof JavaMethod;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean isField(ICodeNodeRef ref, JadxDecompiler decompiler) {
-        if (ref.getAnnType() != ICodeAnnotation.AnnType.FIELD) return false;
-        JavaNode node = decompiler.getJavaNodeByRef(ref);
-        return node instanceof jadx.api.JavaField;
+        if (ref == null) return false;
+        try {
+            JavaNode node = decompiler.getJavaNodeByRef(ref);
+            return node instanceof jadx.api.JavaField;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean isOverloaded(JavaMethod mth) {
