@@ -105,21 +105,20 @@ public class FridaCopyPlugin implements JadxPlugin {
     }
 
     private void registerKeyBinding(JadxGuiContext gui, JadxDecompiler decompiler) {
-        gui.registerGlobalKeyBinding("control shift G", "Frida: Hook from selection", () -> {
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
+            if (e.getID() != java.awt.event.KeyEvent.KEY_PRESSED) return false;
+            if (!e.isControlDown() || !e.isShiftDown()) return false;
+            if (e.getKeyCode() != java.awt.event.KeyEvent.VK_G) return false;
+
             java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-            if (!(focused instanceof JTextComponent)) {
-                JOptionPane.showMessageDialog(gui.getMainFrame(),
-                        "Place cursor in the code editor first.",
-                        "Frida Script Copier", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
+            if (!(focused instanceof JTextComponent)) return false;
             JTextComponent editor = (JTextComponent) focused;
             String selected = editor.getSelectedText();
             if (selected == null || selected.trim().isEmpty()) {
                 JOptionPane.showMessageDialog(gui.getMainFrame(),
                         "Select a method call like System.exit or checkPin first.",
                         "Frida Script Copier", JOptionPane.WARNING_MESSAGE);
-                return;
+                return true;
             }
             selected = selected.trim().replaceAll("[();\\[\\]{}]", "").trim();
 
@@ -128,6 +127,22 @@ public class FridaCopyPlugin implements JadxPlugin {
                 gui.copyToClipboard(buildScript(found, ScriptType.LOG));
                 JOptionPane.showMessageDialog(gui.getMainFrame(),
                         "Copied: Hook & log " + found.getDeclaringClass().getName() + "." + found.getName() + "()",
+                        "Frida Script Copier", JOptionPane.INFORMATION_MESSAGE);
+            } else if (selected.contains(".")) {
+                String[] parts = selected.split("\\.", 2);
+                String rawCls = parts[0].startsWith(".") ? parts[0].substring(1) : parts[0];
+                String methodName = parts[1];
+                String varName = rawCls.replace("$", "_");
+                String script = "Java.perform(function() {\n" +
+                        "  var " + varName + " = Java.use(\"" + rawCls + "\");\n" +
+                        "  " + varName + "[\"" + methodName + "\"].implementation = function() {\n" +
+                        "    send(\"[bypass] " + rawCls + "." + methodName + " no-op\");\n" +
+                        "  };\n" +
+                        "});\n";
+                gui.copyToClipboard(script);
+                JOptionPane.showMessageDialog(gui.getMainFrame(),
+                        "Copied: No-op bypass " + rawCls + "." + methodName + "()\n" +
+                        "(Framework class — generated from selection)",
                         "Frida Script Copier", JOptionPane.INFORMATION_MESSAGE);
             } else {
                 JOptionPane.showMessageDialog(gui.getMainFrame(),
@@ -138,6 +153,7 @@ public class FridaCopyPlugin implements JadxPlugin {
                         " - Make sure the class is loaded in jadx",
                         "Frida Script Copier", JOptionPane.WARNING_MESSAGE);
             }
+            return true;
         });
     }
 
