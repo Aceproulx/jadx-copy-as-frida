@@ -1,6 +1,7 @@
 package frida.copy;
 
 import jadx.api.JadxDecompiler;
+import jadx.api.JavaClass;
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
 import jadx.api.plugins.JadxPlugin;
@@ -18,6 +19,9 @@ import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.MethodNode;
 import java.util.List;
 import java.util.stream.Collectors;
+import javax.swing.JOptionPane;
+import javax.swing.text.JTextComponent;
+import java.awt.KeyboardFocusManager;
 
 public class FridaCopyPlugin implements JadxPlugin {
 
@@ -48,6 +52,8 @@ public class FridaCopyPlugin implements JadxPlugin {
 
         registerField(gui, decompiler, "Frida: Read field value", ScriptType.READ_FIELD);
         registerField(gui, decompiler, "Frida: Modify field value", ScriptType.MODIFY_FIELD);
+
+        registerKeyBinding(gui, decompiler);
     }
 
     private void registerField(JadxGuiContext gui, JadxDecompiler decompiler, String label, ScriptType type) {
@@ -96,6 +102,85 @@ public class FridaCopyPlugin implements JadxPlugin {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private void registerKeyBinding(JadxGuiContext gui, JadxDecompiler decompiler) {
+        gui.registerGlobalKeyBinding("control shift G", "Frida: Hook from selection", () -> {
+            java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            if (!(focused instanceof JTextComponent)) {
+                JOptionPane.showMessageDialog(gui.getMainFrame(),
+                        "Place cursor in the code editor first.",
+                        "Frida Script Copier", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            JTextComponent editor = (JTextComponent) focused;
+            String selected = editor.getSelectedText();
+            if (selected == null || selected.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(gui.getMainFrame(),
+                        "Select a method call like System.exit or checkPin first.",
+                        "Frida Script Copier", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            selected = selected.trim().replaceAll("[();\\[\\]{}]", "").trim();
+
+            JavaMethod found = findMethodBySelection(decompiler, selected);
+            if (found != null) {
+                gui.copyToClipboard(buildScript(found, ScriptType.LOG));
+                JOptionPane.showMessageDialog(gui.getMainFrame(),
+                        "Copied: Hook & log " + found.getDeclaringClass().getName() + "." + found.getName() + "()",
+                        "Frida Script Copier", JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                JOptionPane.showMessageDialog(gui.getMainFrame(),
+                        "Could not resolve method from: \"" + selected + "\"\n\n" +
+                        "Tips:\n" +
+                        " - Select the full call: System.exit\n" +
+                        " - Or just the method name: exit\n" +
+                        " - Make sure the class is loaded in jadx",
+                        "Frida Script Copier", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+    }
+
+    private JavaMethod findMethodBySelection(JadxDecompiler decompiler, String selection) {
+        if (selection.contains(".")) {
+            String[] parts = selection.split("\\.", 2);
+            String classHint = parts[0];
+            String methodHint = parts[1];
+            for (JavaClass cls : decompiler.getClasses()) {
+                String rawName = cls.getRawName();
+                String name = cls.getName();
+                if (name.equals(classHint) || rawName.equals(classHint)
+                        || name.endsWith("." + classHint) || name.endsWith("$" + classHint)
+                        || rawName.endsWith("." + classHint) || rawName.endsWith("/" + classHint)) {
+                    for (JavaMethod mth : cls.getMethods()) {
+                        if (mth.getName().equals(methodHint)) {
+                            return mth;
+                        }
+                    }
+                }
+            }
+            for (JavaClass cls : decompiler.getClasses()) {
+                String rawName = cls.getRawName();
+                String name = cls.getName();
+                if (rawName.contains(classHint) || name.contains(classHint)) {
+                    for (JavaMethod mth : cls.getMethods()) {
+                        if (mth.getName().equals(methodHint)) {
+                            return mth;
+                        }
+                    }
+                }
+            }
+        }
+        JavaMethod first = null;
+        for (JavaClass cls : decompiler.getClasses()) {
+            for (JavaMethod mth : cls.getMethods()) {
+                if (mth.getName().equals(selection)) {
+                    if (first == null) first = mth;
+                    else return null;
+                }
+            }
+        }
+        return first;
     }
 
     private boolean isOverloaded(JavaMethod mth) {
