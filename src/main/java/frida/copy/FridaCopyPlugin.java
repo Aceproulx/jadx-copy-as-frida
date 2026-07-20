@@ -39,6 +39,7 @@ public class FridaCopyPlugin implements JadxPlugin {
         register(gui, decompiler, "Frida: Hook & log args/ret", ScriptType.LOG);
         register(gui, decompiler, "Frida: Return true", ScriptType.RETURN_TRUE);
         register(gui, decompiler, "Frida: Return false", ScriptType.RETURN_FALSE);
+        register(gui, decompiler, "Frida: No-op bypass", ScriptType.NOOP);
         register(gui, decompiler, "Frida: Trace call + stack", ScriptType.TRACE);
         register(gui, decompiler, "Frida: Modify arguments", ScriptType.MODIFY_ARGS);
         register(gui, decompiler, "Frida: Conditional breakpoint", ScriptType.CONDITIONAL_BREAKPOINT);
@@ -182,6 +183,7 @@ public class FridaCopyPlugin implements JadxPlugin {
                     break;
                 case RETURN_TRUE:  body = genReturn(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, "true"); break;
                 case RETURN_FALSE: body = genReturn(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, "false"); break;
+                case NOOP:         body = isVoid ? genNoopVoid(varName, rawCls, clsAlias, methodName, overloadSig, argList) : genNoopReturn(varName, rawCls, clsAlias, methodName, overloadSig, argList); break;
                 case TRACE:        body = genTrace(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
                 case MODIFY_ARGS:  body = genModifyArgs(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames, argTypeStrs); break;
                 case CONDITIONAL_BREAKPOINT: body = genConditionalBreakpoint(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
@@ -241,6 +243,32 @@ public class FridaCopyPlugin implements JadxPlugin {
             var, name, overloadSig, argList,
             clsAlias, name, retVal,
             retVal
+        );
+    }
+
+    private String genNoopReturn(String var, String rawCls, String clsAlias, String name,
+                                  String overloadSig, String argList) {
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
+            "  send(`[bypass] %s.%s no-op`);\n" +
+            "};\n",
+            var, rawCls,
+            var, name, overloadSig, argList,
+            clsAlias, name
+        );
+    }
+
+    private String genNoopVoid(String var, String rawCls, String clsAlias, String name,
+                                String overloadSig, String argList) {
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
+            "  send(`[bypass] %s.%s no-op`);\n" +
+            "};\n",
+            var, rawCls,
+            var, name, overloadSig, argList,
+            clsAlias, name
         );
     }
 
@@ -589,7 +617,7 @@ public class FridaCopyPlugin implements JadxPlugin {
     }
 
     private enum ScriptType {
-        LOG, RETURN_TRUE, RETURN_FALSE, TRACE, OVERLOADS, MODIFY_ARGS, CONDITIONAL_BREAKPOINT,
+        LOG, RETURN_TRUE, RETURN_FALSE, NOOP, TRACE, OVERLOADS, MODIFY_ARGS, CONDITIONAL_BREAKPOINT,
         DUMP_ALL_FIELDS, READ_FIELD, MODIFY_FIELD
     }
 }
