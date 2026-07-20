@@ -249,16 +249,22 @@ public class FridaCopyPlugin implements JadxPlugin {
         for (int i = 0; i < argNames.size(); i++) {
             String n = argNames.get(i);
             String placeholder = argPlaceholder(argTypes.get(i));
-            lines.append(String.format("  // %s = %s;  <-- EDIT THIS VALUE\n", n, placeholder));
+            lines.append(String.format("  %s = %s;  // <-- EDIT THIS VALUE\n", n, placeholder));
+        }
+
+        for (int i = 0; i < argNames.size(); i++) {
+            String n = argNames.get(i);
             lines.append(String.format("  send(\"[modify] %s=\" + %s);\n", n, n));
         }
 
         String callArgs = String.join(", ", argNames);
         if (argNames.isEmpty()) {
-            lines.append(String.format("  return this[\"%s\"]();\n", name));
+            lines.append(String.format("  var ret = this[\"%s\"]();\n", name));
         } else {
-            lines.append(String.format("  return this[\"%s\"](%s);\n", name, callArgs));
+            lines.append(String.format("  var ret = this[\"%s\"](%s);\n", name, callArgs));
         }
+        lines.append(String.format("  send(\"%s.%s result=\" + ret);\n", clsAlias, name));
+        lines.append("  return ret;\n");
         lines.append("};\n");
         return lines.toString();
     }
@@ -287,10 +293,12 @@ public class FridaCopyPlugin implements JadxPlugin {
 
         String callArgs = String.join(", ", argNames);
         if (argNames.isEmpty()) {
-            lines.append(String.format("  return this[\"%s\"]();\n", name));
+            lines.append(String.format("  var ret = this[\"%s\"]();\n", name));
         } else {
-            lines.append(String.format("  return this[\"%s\"](%s);\n", name, callArgs));
+            lines.append(String.format("  var ret = this[\"%s\"](%s);\n", name, callArgs));
         }
+        lines.append(String.format("  send(\"%s.%s result=\" + ret);\n", clsAlias, name));
+        lines.append("  return ret;\n");
         lines.append("};\n");
         return lines.toString();
     }
