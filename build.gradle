@@ -1,0 +1,28 @@
+apply plugin: 'java'
+
+group = 'frida.copy'
+version = '1.0.0'
+
+sourceCompatibility = '11'
+targetCompatibility = '11'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile files('/usr/share/jadx/lib/jadx-1.5.5-all.jar')
+}
+
+jar {
+    baseName = 'frida-copy'
+    version = ''
+    from(sourceSets.main.output)
+    manifest {
+        attributes 'Plugin-Class': 'frida.copy.FridaCopyPlugin'
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
