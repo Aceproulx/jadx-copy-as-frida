@@ -130,9 +130,11 @@ public class FridaCopyPlugin implements JadxPlugin {
                         "Frida Script Copier", JOptionPane.INFORMATION_MESSAGE);
             } else if (selected.contains(".")) {
                 String[] parts = selected.split("\\.", 2);
-                String rawCls = parts[0].startsWith(".") ? parts[0].substring(1) : parts[0];
+                String classHint = parts[0].startsWith(".") ? parts[0].substring(1) : parts[0];
                 String methodName = parts[1];
-                String varName = rawCls.replace("$", "_");
+                String rawCls = resolveFullyQualifiedClassName(decompiler, classHint);
+                if (rawCls == null) rawCls = classHint;
+                String varName = rawCls.replace("$", "_").replace(".", "_");
                 String script = "Java.perform(function() {\n" +
                         "  var " + varName + " = Java.use(\"" + rawCls + "\");\n" +
                         "  " + varName + "[\"" + methodName + "\"].implementation = function() {\n" +
@@ -141,8 +143,7 @@ public class FridaCopyPlugin implements JadxPlugin {
                         "});\n";
                 gui.copyToClipboard(script);
                 JOptionPane.showMessageDialog(gui.getMainFrame(),
-                        "Copied: No-op bypass " + rawCls + "." + methodName + "()\n" +
-                        "(Framework class — generated from selection)",
+                        "Copied: No-op bypass " + rawCls + "." + methodName + "()",
                         "Frida Script Copier", JOptionPane.INFORMATION_MESSAGE);
             } else {
                 JOptionPane.showMessageDialog(gui.getMainFrame(),
@@ -197,6 +198,40 @@ public class FridaCopyPlugin implements JadxPlugin {
             }
         }
         return first;
+    }
+
+    private static final String[][] COMMON_PACKAGES = {
+            {"java.lang", "java.util", "java.io", "java.net", "java.math",
+             "java.security", "java.text", "java.nio", "java.util.regex"},
+            {"android.app", "android.content", "android.os", "android.widget",
+             "android.view", "android.graphics", "android.net", "android.util",
+             "android.webkit", "android.telephony", "android.provider",
+             "android.location", "android.media", "android.hardware"},
+            {"androidx.appcompat", "androidx.core", "androidx.fragment",
+             "com.google.android.gms", "com.google.firebase"},
+    };
+
+    private String resolveFullyQualifiedClassName(JadxDecompiler decompiler, String shortName) {
+        for (JavaClass cls : decompiler.getClasses()) {
+            String rawName = cls.getRawName();
+            String name = cls.getName();
+            if (name.equals(shortName) || rawName.equals(shortName)) return rawName;
+            if (name.endsWith("." + shortName) || rawName.endsWith("." + shortName)
+                    || name.endsWith("$" + shortName) || rawName.endsWith("/" + shortName)) {
+                return rawName;
+            }
+        }
+        for (String[] pkgs : COMMON_PACKAGES) {
+            for (String pkg : pkgs) {
+                String candidate = pkg + "." + shortName;
+                for (JavaClass cls : decompiler.getClasses()) {
+                    if (cls.getRawName().equals(candidate) || cls.getName().equals(candidate)) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private boolean isOverloaded(JavaMethod mth) {
