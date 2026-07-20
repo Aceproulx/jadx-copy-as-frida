@@ -14,6 +14,7 @@ import jadx.api.metadata.annotations.VarNode;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.ClassNode;
+import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.MethodNode;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -41,7 +42,25 @@ public class FridaCopyPlugin implements JadxPlugin {
         register(gui, decompiler, "Frida: Trace call + stack", ScriptType.TRACE);
         register(gui, decompiler, "Frida: Modify arguments", ScriptType.MODIFY_ARGS);
         register(gui, decompiler, "Frida: Conditional breakpoint", ScriptType.CONDITIONAL_BREAKPOINT);
+        register(gui, decompiler, "Frida: Dump all fields", ScriptType.DUMP_ALL_FIELDS);
         register(gui, decompiler, "Frida: Hook all overloads", ScriptType.OVERLOADS);
+
+        registerField(gui, decompiler, "Frida: Read field value", ScriptType.READ_FIELD);
+        registerField(gui, decompiler, "Frida: Modify field value", ScriptType.MODIFY_FIELD);
+    }
+
+    private void registerField(JadxGuiContext gui, JadxDecompiler decompiler, String label, ScriptType type) {
+        gui.addPopupMenuAction(
+                label,
+                ref -> isField(ref, decompiler),
+                null,
+                ref -> {
+                    JavaNode node = decompiler.getJavaNodeByRef(ref);
+                    if (node instanceof jadx.api.JavaField) {
+                        gui.copyToClipboard(buildFieldScript((jadx.api.JavaField) node, type));
+                    }
+                }
+        );
     }
 
     private void register(JadxGuiContext gui, JadxDecompiler decompiler, String label, ScriptType type) {
@@ -62,6 +81,12 @@ public class FridaCopyPlugin implements JadxPlugin {
         if (ref.getAnnType() != ICodeAnnotation.AnnType.METHOD) return false;
         JavaNode node = decompiler.getJavaNodeByRef(ref);
         return node instanceof JavaMethod;
+    }
+
+    private boolean isField(ICodeNodeRef ref, JadxDecompiler decompiler) {
+        if (ref.getAnnType() != ICodeAnnotation.AnnType.FIELD) return false;
+        JavaNode node = decompiler.getJavaNodeByRef(ref);
+        return node instanceof jadx.api.JavaField;
     }
 
     private boolean isOverloaded(JavaMethod mth) {
@@ -160,6 +185,7 @@ public class FridaCopyPlugin implements JadxPlugin {
                 case TRACE:        body = genTrace(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
                 case MODIFY_ARGS:  body = genModifyArgs(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames, argTypeStrs); break;
                 case CONDITIONAL_BREAKPOINT: body = genConditionalBreakpoint(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
+                case DUMP_ALL_FIELDS: body = genDumpAllFields(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
                 default: body = "";
             }
         }
@@ -301,6 +327,122 @@ public class FridaCopyPlugin implements JadxPlugin {
         lines.append("  return ret;\n");
         lines.append("};\n");
         return lines.toString();
+    }
+
+    private String genDumpAllFields(String var, String rawCls, String clsAlias, String name, String alias,
+                                     String overloadSig, String argList, List<String> argNames) {
+        String callArgs = String.join(", ", argNames);
+        String call = argNames.isEmpty()
+                ? String.format("this[\"%s\"]()", name)
+                : String.format("this[\"%s\"](%s)", name, callArgs);
+
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
+            "  send(\"========================================\");\n" +
+            "  send(\"  [DUMP] %s.%s called — dumping all fields\");\n" +
+            "  var fields = this.getClass().getDeclaredFields();\n" +
+            "  for (var i = 0; i < fields.length; i++) {\n" +
+            "    fields[i].setAccessible(true);\n" +
+            "    var fname = fields[i].getName();\n" +
+            "    try {\n" +
+            "      var fval = fields[i].get(this);\n" +
+            "      send(\"    \" + fname + \" = \" + fval);\n" +
+            "    } catch(e) {\n" +
+            "      send(\"    \" + fname + \" = <error: \" + e + \">\");\n" +
+            "    }\n" +
+            "  }\n" +
+            "  send(\"========================================\");\n" +
+            "  var ret = %s;\n" +
+            "  send(\"%s.%s result=\" + ret);\n" +
+            "  return ret;\n" +
+            "};\n",
+            var, rawCls,
+            var, name, overloadSig, argList,
+            clsAlias, name,
+            call,
+            clsAlias, name
+        );
+    }
+
+    // ---- Field scripts ----
+
+    private String buildFieldScript(jadx.api.JavaField field, ScriptType type) {
+        String rawCls = field.getDeclaringClass().getRawName();
+        String clsAlias = field.getDeclaringClass().getName();
+        String varName = clsAlias.replace("$", "_");
+        String fieldName = field.getRawName();
+        FieldNode fieldNode = field.getFieldNode();
+        boolean isStatic = fieldNode != null && fieldNode.isStatic();
+        String fieldType = field.getType().toString();
+        String placeholder = argPlaceholder(fieldType);
+
+        switch (type) {
+            case READ_FIELD:
+                return isStatic
+                        ? genReadStaticField(varName, rawCls, clsAlias, fieldName)
+                        : genReadInstanceField(varName, rawCls, clsAlias, fieldName);
+            case MODIFY_FIELD:
+                return isStatic
+                        ? genModifyStaticField(varName, rawCls, clsAlias, fieldName, placeholder)
+                        : genModifyInstanceField(varName, rawCls, clsAlias, fieldName, placeholder);
+            default:
+                return "";
+        }
+    }
+
+    private String genReadStaticField(String var, String rawCls, String clsAlias, String fieldName) {
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "send(\"[field] %s.%s = \" + %s.%s.value);\n",
+            var, rawCls,
+            clsAlias, fieldName,
+            var, fieldName
+        );
+    }
+
+    private String genReadInstanceField(String var, String rawCls, String clsAlias, String fieldName) {
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "Java.choose(\"%s\", {\n" +
+            "  onMatch: function(instance) {\n" +
+            "    send(\"[field] instance.%s = \" + instance.%s.value);\n" +
+            "  },\n" +
+            "  onComplete: function() {}\n" +
+            "});\n",
+            var, rawCls,
+            rawCls,
+            fieldName, fieldName
+        );
+    }
+
+    private String genModifyStaticField(String var, String rawCls, String clsAlias, String fieldName, String placeholder) {
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "%s.%s.value = %s;  // <-- EDIT THIS VALUE\n" +
+            "send(\"[field] %s.%s = \" + %s.%s.value);\n",
+            var, rawCls,
+            var, fieldName, placeholder,
+            clsAlias, fieldName,
+            var, fieldName
+        );
+    }
+
+    private String genModifyInstanceField(String var, String rawCls, String clsAlias, String fieldName, String placeholder) {
+        return String.format(
+            "var %s = Java.use(\"%s\");\n" +
+            "Java.choose(\"%s\", {\n" +
+            "  onMatch: function(instance) {\n" +
+            "    instance.%s.value = %s;  // <-- EDIT THIS VALUE\n" +
+            "    send(\"[field] instance.%s = \" + instance.%s.value);\n" +
+            "  },\n" +
+            "  onComplete: function() {}\n" +
+            "});\n",
+            var, rawCls,
+            rawCls,
+            fieldName, placeholder,
+            fieldName, fieldName
+        );
     }
 
     // ---- Overloaded scripts ----
@@ -447,6 +589,7 @@ public class FridaCopyPlugin implements JadxPlugin {
     }
 
     private enum ScriptType {
-        LOG, RETURN_TRUE, RETURN_FALSE, TRACE, OVERLOADS, MODIFY_ARGS, CONDITIONAL_BREAKPOINT
+        LOG, RETURN_TRUE, RETURN_FALSE, TRACE, OVERLOADS, MODIFY_ARGS, CONDITIONAL_BREAKPOINT,
+        DUMP_ALL_FIELDS, READ_FIELD, MODIFY_FIELD
     }
 }
