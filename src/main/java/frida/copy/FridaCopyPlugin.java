@@ -39,6 +39,8 @@ public class FridaCopyPlugin implements JadxPlugin {
         register(gui, decompiler, "Frida: Return true", ScriptType.RETURN_TRUE);
         register(gui, decompiler, "Frida: Return false", ScriptType.RETURN_FALSE);
         register(gui, decompiler, "Frida: Trace call + stack", ScriptType.TRACE);
+        register(gui, decompiler, "Frida: Modify arguments", ScriptType.MODIFY_ARGS);
+        register(gui, decompiler, "Frida: Conditional breakpoint", ScriptType.CONDITIONAL_BREAKPOINT);
         register(gui, decompiler, "Frida: Hook all overloads", ScriptType.OVERLOADS);
     }
 
@@ -137,6 +139,9 @@ public class FridaCopyPlugin implements JadxPlugin {
 
         List<String> argNames = getArgNames(mth);
         String argList = String.join(", ", argNames);
+        List<String> argTypeStrs = mth.getArguments().stream()
+                .map(t -> t.toString())
+                .collect(Collectors.toList());
 
         boolean isVoid = !isConstructor && info != null && info.getReturnType() == ArgType.VOID;
 
@@ -153,6 +158,8 @@ public class FridaCopyPlugin implements JadxPlugin {
                 case RETURN_TRUE:  body = genReturn(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, "true"); break;
                 case RETURN_FALSE: body = genReturn(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, "false"); break;
                 case TRACE:        body = genTrace(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
+                case MODIFY_ARGS:  body = genModifyArgs(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames, argTypeStrs); break;
+                case CONDITIONAL_BREAKPOINT: body = genConditionalBreakpoint(varName, rawCls, clsAlias, methodName, aliasName, overloadSig, argList, argNames); break;
                 default: body = "";
             }
         }
@@ -229,14 +236,69 @@ public class FridaCopyPlugin implements JadxPlugin {
         );
     }
 
+    private String genModifyArgs(String var, String rawCls, String clsAlias, String name, String alias,
+                                  String overloadSig, String argList, List<String> argNames,
+                                  List<String> argTypes) {
+        StringBuilder lines = new StringBuilder();
+        lines.append(String.format("var %s = Java.use(\"%s\");\n", var, rawCls));
+        lines.append(String.format("%s[\"%s\"]%s.implementation = function (%s) {\n",
+                var, name, overloadSig, argList));
+        lines.append(String.format("  send(`%s.%s is called: %s`);\n",
+                clsAlias, name, buildLogCall(alias, name, argNames)));
+
+        for (int i = 0; i < argNames.size(); i++) {
+            String n = argNames.get(i);
+            String placeholder = argPlaceholder(argTypes.get(i));
+            lines.append(String.format("  // %s = %s;  <-- EDIT THIS VALUE\n", n, placeholder));
+            lines.append(String.format("  send(\"[modify] %s=\" + %s);\n", n, n));
+        }
+
+        String callArgs = String.join(", ", argNames);
+        if (argNames.isEmpty()) {
+            lines.append(String.format("  return this[\"%s\"]();\n", name));
+        } else {
+            lines.append(String.format("  return this[\"%s\"](%s);\n", name, callArgs));
+        }
+        lines.append("};\n");
+        return lines.toString();
+    }
+
+    private String genConditionalBreakpoint(String var, String rawCls, String clsAlias, String name,
+                                             String alias, String overloadSig, String argList,
+                                             List<String> argNames) {
+        StringBuilder lines = new StringBuilder();
+        lines.append(String.format("var %s = Java.use(\"%s\");\n", var, rawCls));
+        lines.append(String.format("%s[\"%s\"]%s.implementation = function (%s) {\n",
+                var, name, overloadSig, argList));
+        lines.append(String.format("  send(`%s.%s is called: %s`);\n",
+                clsAlias, name, buildLogCall(alias, name, argNames)));
+        lines.append("  // EDIT YOUR CONDITION BELOW (example: arg == \"value\")\n");
+        lines.append("  if (true) {  // <-- change this condition\n");
+        lines.append(String.format("    send(\"========================================\");\n"));
+        lines.append(String.format("    send(\"  [BREAKPOINT HIT] %s.%s\", );\n", clsAlias, name));
+        for (String n : argNames) {
+            lines.append(String.format("    send(\"    %s=\" + %s);\n", n, n));
+        }
+        lines.append(String.format("    send(\"========================================\");\n"));
+        lines.append("    Java.use(\"java.lang.Thread\").sleep(5000);\n");
+        lines.append("    send(\"  [RESUMING]\");\n");
+        lines.append("  }\n");
+        lines.append("  // EDIT YOUR CONDITION ABOVE\n");
+
+        String callArgs = String.join(", ", argNames);
+        if (argNames.isEmpty()) {
+            lines.append(String.format("  return this[\"%s\"]();\n", name));
+        } else {
+            lines.append(String.format("  return this[\"%s\"](%s);\n", name, callArgs));
+        }
+        lines.append("};\n");
+        return lines.toString();
+    }
+
     // ---- Overloaded scripts ----
 
     private String buildOverloaded(JavaMethod mth, String rawCls, String clsAlias, String varName,
                                     String name, String alias, ScriptType type) {
-        String overloadTypes = mth.getArguments().stream()
-                .map(t -> "'" + parseArgType(t) + "'")
-                .collect(Collectors.joining(", "));
-
         switch (type) {
             case LOG:
                 return String.format(
@@ -274,6 +336,55 @@ public class FridaCopyPlugin implements JadxPlugin {
                     varName, name,
                     clsAlias, name
                 );
+            case MODIFY_ARGS:
+                return String.format(
+                    "var %s = Java.use(\"%s\");\n" +
+                    "%s[\"%s\"].overloads.forEach(function(overload) {\n" +
+                    "  overload.implementation = function() {\n" +
+                    "    var args = Array.prototype.slice.call(arguments);\n" +
+                    "    send(`%s.%s called with ${JSON.stringify(args)}`);\n" +
+                    "    // EDIT args ARRAY VALUES BELOW\n" +
+                    "    // args[0] = \"new_value\";\n" +
+                    "    // EDIT args ARRAY VALUES ABOVE\n" +
+                    "    send(`[modify] args=${JSON.stringify(args)}`);\n" +
+                    "    var ret = overload.apply(this, args);\n" +
+                    "    send(`%s.%s result=${ret}`);\n" +
+                    "    return ret;\n" +
+                    "  };\n" +
+                    "});\n",
+                    varName, rawCls,
+                    varName, name,
+                    clsAlias, name,
+                    clsAlias, name
+                );
+            case CONDITIONAL_BREAKPOINT:
+                return String.format(
+                    "var %s = Java.use(\"%s\");\n" +
+                    "%s[\"%s\"].overloads.forEach(function(overload) {\n" +
+                    "  overload.implementation = function() {\n" +
+                    "    var args = Array.prototype.slice.call(arguments);\n" +
+                    "    send(`%s.%s called with ${JSON.stringify(args)}`);\n" +
+                    "    // EDIT YOUR CONDITION BELOW\n" +
+                    "    if (true) {  // <-- change this condition\n" +
+                    "      send(\"========================================\");\n" +
+                    "      send(\"  [BREAKPOINT HIT] %s.%s (overloaded)\");\n" +
+                    "      send(\"    args=\" + JSON.stringify(args));\n" +
+                    "      send(\"========================================\");\n" +
+                    "      Java.use(\"java.lang.Thread\").sleep(5000);\n" +
+                    "      send(\"  [RESUMING]\");\n" +
+                    "    }\n" +
+                    "    // EDIT YOUR CONDITION ABOVE\n" +
+                    "    var ret = overload.apply(this, arguments);\n" +
+                    "    send(`%s.%s result=${ret}`);\n" +
+                    "    return ret;\n" +
+                    "  };\n" +
+                    "});\n",
+                    varName, rawCls,
+                    varName, name,
+                    clsAlias, name,
+                    clsAlias, name,
+                    clsAlias, name
+                );
             default:
                 return "";
         }
@@ -304,6 +415,22 @@ public class FridaCopyPlugin implements JadxPlugin {
                 .collect(Collectors.joining(", "));
     }
 
+    private static String argPlaceholder(String type) {
+        if (type == null) return "CHANGE_ME";
+        switch (type) {
+            case "boolean": return "true";
+            case "byte":
+            case "char":
+            case "short":
+            case "int":
+            case "long":    return "1";
+            case "float":
+            case "double":  return "1.0";
+            case "java.lang.String": return "\"CHANGE_ME\"";
+            default:        return "null";
+        }
+    }
+
     private static String parseArgType(ArgType type) {
         if (type.isArray()) {
             return jadx.core.codegen.TypeGen.signature(type).replace("/", ".");
@@ -312,6 +439,6 @@ public class FridaCopyPlugin implements JadxPlugin {
     }
 
     private enum ScriptType {
-        LOG, RETURN_TRUE, RETURN_FALSE, TRACE, OVERLOADS
+        LOG, RETURN_TRUE, RETURN_FALSE, TRACE, OVERLOADS, MODIFY_ARGS, CONDITIONAL_BREAKPOINT
     }
 }
