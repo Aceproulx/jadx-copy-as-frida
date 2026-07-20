@@ -166,7 +166,7 @@ public class FridaCopyPlugin implements JadxPlugin {
         String logCall = buildLogCall(alias, name, argNames);
         return String.format(
             "var %s = Java.use(\"%s\");\n" +
-            "%s[\"%s\"]%s = function (%s) {\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
             "  send(`%s.%s is called: %s`);\n" +
             "  var ret = this[\"%s\"](%s);\n" +
             "  send(`%s.%s result=${ret}`);\n" +
@@ -185,7 +185,7 @@ public class FridaCopyPlugin implements JadxPlugin {
         String logCall = buildLogCall(alias, name, argNames);
         return String.format(
             "var %s = Java.use(\"%s\");\n" +
-            "%s[\"%s\"]%s = function (%s) {\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
             "  send(`%s.%s is called: %s`);\n" +
             "  this[\"%s\"](%s);\n" +
             "};\n",
@@ -200,7 +200,7 @@ public class FridaCopyPlugin implements JadxPlugin {
                               String overloadSig, String argList, String retVal) {
         return String.format(
             "var %s = Java.use(\"%s\");\n" +
-            "%s[\"%s\"]%s = function (%s) {\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
             "  send(`%s.%s => %s bypass`);\n" +
             "  return %s;\n" +
             "};\n",
@@ -216,7 +216,7 @@ public class FridaCopyPlugin implements JadxPlugin {
         String logCall = buildLogCall(alias, name, argNames);
         return String.format(
             "var %s = Java.use(\"%s\");\n" +
-            "%s[\"%s\"]%s = function (%s) {\n" +
+            "%s[\"%s\"]%s.implementation = function (%s) {\n" +
             "  send(`%s.%s is called: %s`);\n" +
             "  send(Java.use(\"android.util.Log\").getStackTraceString(\n" +
             "    Java.use(\"java.lang.Throwable\").$new()));\n" +
