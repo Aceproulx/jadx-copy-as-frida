@@ -2,6 +2,8 @@
 
 A [jadx](https://github.com/skylot/jadx) plugin that adds right-click Frida script generation to the decompiled code view. Click on any method or field, copy a ready-to-run Frida hook script to your clipboard.
 
+![jadx-copy-as-frida](image.png)
+
 ## Features
 
 ### Method Hooks (right-click a method)
